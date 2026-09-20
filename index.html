@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نظام الجرد الذكي - قراءة الباركود (Pro)</title>
+
+    <!-- مكتبة jsQR لقراءة QR codes -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <!-- مكتبة QuaggaJS لقراءة 1D barcodes (EAN/UPC/Code128...) -->
+    <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
+    <!-- مكتبة تصدير ملفات الإكسيل -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <!-- خطوط وأيقونات -->
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --glass-bg: rgba(30, 41, 59, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --danger: #ef4444;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+
+        * {
+            box-sizing: border-box;
+            font-family: 'Cairo', sans-serif;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background: var(--bg-color);
+            background-image: radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.15), transparent 25%),
+                              radial-gradient(circle at 85% 30%, rgba(16, 185, 129, 0.15), transparent 25%);
+            color: var(--text-main);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .container { grid-template-columns: 1fr; }
+            body { padding: 12px; }
+        }
+
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+        }
+
+        h2 {
+            margin-top: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 800;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        select {
+            width: 100%;
+            padding: 10px;
+            border-radius: 10px;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--glass-border);
+            color: white;
+            font-size: 16px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        select:focus { border-color: var(--primary); }
+        select option { background: var(--bg-color); color: white; }
+
+        .reader-wrapper {
+            position: relative;
+            width: 100%;
+            border-radius: 15px;
+            overflow: hidden;
+            border: 2px solid var(--primary);
+            background: rgba(0,0,0,0.5);
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: border-color 0.3s;
+        }
+
+        .reader-wrapper.scanning { border-color: var(--success); }
+        .reader-wrapper.error { border-color: var(--danger); }
+
+        #videoEl {
+            width: 100%;
+            max-width: 100%;
+            max-height: 60vh;
+            border-radius: 13px;
+            object-fit: cover;
+            display: block;
+        }
+
+        #canvasEl { display: none; }
+
+        .scan-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+            display: none;
+            z-index: 5;
+        }
+
+        .scan-overlay.active { display: block; }
+
+        .scan-line {
+            position: absolute;
+            left: 10%;
+            right: 10%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--success), transparent);
+            box-shadow: 0 0 12px var(--success);
+            top: 20%;
+            animation: scanMove 2s linear infinite;
+        }
+
+        @keyframes scanMove {
+            0%   { top: 20%; opacity: 1; }
+            50%  { top: 80%; opacity: 1; }
+            100% { top: 20%; opacity: 1; }
+        }
+
+        .placeholder {
+            color: var(--text-muted);
+            text-align: center;
+            padding: 30px 10px;
+            font-size: 15px;
+        }
+
+        .placeholder i {
+            font-size: 42px;
+            display: block;
+            margin-bottom: 10px;
+            opacity: 0.6;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            color: white;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary { background: var(--primary); }
+        .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+
+        .btn-danger { background: var(--danger); }
+        .btn-danger:hover:not(:disabled) { background: #dc2626; }
+
+        .btn-excel {
+            background: var(--success);
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+            margin-top: 15px;
+        }
+        .btn-excel:hover:not(:disabled) {
+            background: #059669;
+            box-shadow: 0 0 25px rgba(16, 185, 129, 0.6);
+            transform: translateY(-2px);
+        }
+
+        .status-msg {
+            margin-top: 10px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 14px;
+            display: none;
+        }
+        .status-msg.show { display: block; }
+        .status-msg.info    { background: rgba(59,130,246,0.15); border: 1px solid var(--primary); color: #bfdbfe; }
+        .status-msg.success { background: rgba(16,185,129,0.15); border: 1px solid var(--success); color: #a7f3d0; }
+        .status-msg.error   { background: rgba(239,68,68,0.15);  border: 1px solid var(--danger);  color: #fecaca; }
+        .status-msg.warning { background: rgba(245,158,11,0.15); border: 1px solid var(--warning); color: #fde68a; }
+
+        .table-container {
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: right;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        th {
+            background-color: rgba(0,0,0,0.4);
+            color: var(--primary);
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+
+        tr:hover { background-color: rgba(255,255,255,0.05); }
+
+        .stats {
+            display: flex;
+            justify-content: space-between;
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+
+        .stat-box { text-align: center; }
+        .stat-num { font-size: 24px; font-weight: bold; color: var(--primary); }
+
+        .flash { animation: flashAnim 0.5s ease-out; }
+        @keyframes flashAnim {
+            0% { background-color: var(--success); }
+            100% { background-color: transparent; }
+        }
+
+        .scan-toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--success);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 50px;
+            font-weight: 600;
+            box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4);
+            opacity: 0;
+            transition: all 0.4s ease;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .scan-toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* تنبيه البروتوكول */
+        .protocol-warning {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid var(--danger);
+            color: #fecaca;
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            display: none;
+        }
+        .protocol-warning.show { display: block; }
+        .protocol-warning strong { color: #fca5a5; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <!-- قسم الكاميرا -->
+        <div class="glass-panel">
+            <h2><i class="fa-solid fa-camera-viewfinder"></i> الماسح الضوئي</h2>
+
+            <div class="protocol-warning" id="protocolWarning">
+                <strong><i class="fa-solid fa-triangle-exclamation"></i> تنبيه مهم:</strong>
+                أنت تفتح الملف من القرص مباشرة (file://). أغلب المتصفحات تمنع الوصول للكاميرا في هذه الحالة.
+                الرجاء استخدام الملف عبر خادم محلي أو رفعه على استضافة، أو استخدم متصفح Firefox الذي يسمح بذلك أحياناً.
+            </div>
+
+            <div class="controls">
+                <select id="cameraSelect">
+                    <option value="">— الكاميرا الخلفية (افتراضي) —</option>
+                </select>
+                <button id="cameraActionBtn" class="btn btn-primary" onclick="toggleCamera()">
+                    <i class="fa-solid fa-play"></i> تشغيل الكاميرا
+                </button>
+            </div>
+
+            <div class="reader-wrapper" id="readerWrapper">
+                <video id="videoEl" playsinline muted autoplay></video>
+                <canvas id="canvasEl"></canvas>
+                <div class="scan-overlay" id="scanOverlay">
+                    <div class="scan-line"></div>
+                </div>
+                <div class="placeholder" id="readerPlaceholder">
+                    <i class="fa-solid fa-camera"></i>
+                    الكاميرا مغلقة - اضغط "تشغيل الكاميرا" للبدء
+                </div>
+            </div>
+
+            <div class="status-msg" id="statusMsg"></div>
+        </div>
+
+        <!-- قسم البيانات والجدول -->
+        <div class="glass-panel">
+            <h2><i class="fa-solid fa-boxes-stacked"></i> الأصناف الممسوحة</h2>
+
+            <div class="stats">
+                <div class="stat-box">
+                    <div class="stat-num" id="totalItems">0</div>
+                    <div>عدد الأصناف</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-num" id="totalQuantity">0</div>
+                    <div>إجمالي الكمية</div>
+                </div>
+            </div>
+
+            <div class="table-container" id="tableWrapper">
+                <table id="dataTable">
+                    <thead>
+                        <tr>
+                            <th>الباركود</th>
+                            <th>الكمية</th>
+                            <th>الإجراء</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody"></tbody>
+                </table>
+            </div>
+
+            <button class="btn btn-excel" onclick="exportToExcel()">
+                <i class="fa-solid fa-file-excel"></i> تصدير إلى شيت إكسيل
+            </button>
+        </div>
+    </div>
+
+    <!-- إشعار المسح -->
+    <div class="scan-toast" id="scanToast">
+        <i class="fa-solid fa-check-circle"></i>
+        <span id="scanToastText">تمت قراءة الباركود</span>
+    </div>
+
+    <script>
+        // ===== متغيرات الحالة =====
+        let inventoryData = {};
+        let lastScannedCode = "";
+        let lastScanTime = 0;
+
+        let videoStream = null;
+        let isScanning = false;
+        let isStarting = false;
+        let scanAnimationFrame = null;
+        let currentDeviceId = null;
+
+        // ===== عناصر DOM =====
+        const videoEl       = document.getElementById('videoEl');
+        const canvasEl      = document.getElementById('canvasEl');
+        const canvasCtx     = canvasEl.getContext('2d', { willReadFrequently: true });
+        const cameraSelect  = document.getElementById('cameraSelect');
+        const cameraActionBtn = document.getElementById('cameraActionBtn');
+        const readerPlaceholder = document.getElementById('readerPlaceholder');
+        const readerWrapper = document.getElementById('readerWrapper');
+        const scanOverlay   = document.getElementById('scanOverlay');
+        const statusMsg     = document.getElementById('statusMsg');
+        const protocolWarning = document.getElementById('protocolWarning');
+
+        // ===== أدوات مساعدة =====
+        function showStatus(message, type = 'info') {
+            statusMsg.textContent = message;
+            statusMsg.className = 'status-msg show ' + type;
+        }
+        function hideStatus() {
+            statusMsg.className = 'status-msg';
+            statusMsg.textContent = '';
+        }
+
+        function setBtnState(state) {
+            if (state === 'play') {
+                cameraActionBtn.innerHTML = '<i class="fa-solid fa-play"></i> تشغيل الكاميرا';
+                cameraActionBtn.className = 'btn btn-primary';
+                cameraActionBtn.disabled = false;
+            } else if (state === 'stop') {
+                cameraActionBtn.innerHTML = '<i class="fa-solid fa-stop"></i> إيقاف الكاميرا';
+                cameraActionBtn.className = 'btn btn-danger';
+                cameraActionBtn.disabled = false;
+            } else if (state === 'loading') {
+                cameraActionBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري التشغيل...';
+                cameraActionBtn.className = 'btn btn-primary';
+                cameraActionBtn.disabled = true;
+            }
+        }
+
+        // ===== كشف بروتوكول file:// =====
+        function checkProtocol() {
+            if (location.protocol === 'file:') {
+                protocolWarning.classList.add('show');
+            }
+        }
+
+        // ===== فحص توافق المتصفح =====
+        function checkBrowserSupport() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showStatus('متصفحك لا يدعم الوصول للكاميرا (getUserMedia). استخدم Chrome أو Firefox أو Safari حديث.', 'error');
+                setBtnState('play');
+                cameraActionBtn.disabled = true;
+                return false;
+            }
+            return true;
+        }
+
+        // ===== جلب قائمة الكاميرات (بعد منح الصلاحية) =====
+        async function loadCameras() {
+            try {
+                // لا يمكن enumerateDevices بدون صلاحية مسبقة في بعض المتصفحات
+                // لذا نطلب صلاحية مؤقتة أولاً
+                let stream;
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                } catch (e) {
+                    // فشل طلب الصلاحية - لا يمكن جلب القائمة
+                    return;
+                }
+                // إيقاف الـ stream المؤقت
+                stream.getTracks().forEach(t => t.stop());
+
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+                if (videoDevices.length === 0) {
+                    cameraSelect.innerHTML = '<option value="">— لا توجد كاميرات —</option>';
+                    return;
+                }
+
+                cameraSelect.innerHTML = '';
+                const defaultOption = document.createElement('option');
+                defaultOption.value = '';
+                defaultOption.text = '— الكاميرا الخلفية (افتراضي) —';
+                cameraSelect.appendChild(defaultOption);
+
+                videoDevices.forEach((device, idx) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    let label = device.label || `كاميرا ${idx + 1}`;
+                    if (label.length > 50) label = label.substring(0, 50) + '...';
+                    option.text = label;
+                    cameraSelect.appendChild(option);
+                });
+
+                // اختيار الخلفية افتراضياً
+                const backCamera = videoDevices.find(d => {
+                    const l = (d.label || '').toLowerCase();
+                    return l.includes('back') || l.includes('rear') || l.includes('environment') || l.includes('خلفية');
+                });
+                if (backCamera) {
+                    cameraSelect.value = backCamera.deviceId;
+                }
+            } catch (err) {
+                console.error('خطأ في جلب الكاميرات:', err);
+            }
+        }
+
+        // ===== تشغيل الكاميرا =====
+        async function toggleCamera() {
+            if (isStarting) return;
+            if (isScanning) {
+                await stopCamera();
+                return;
+            }
+            await startCamera();
+        }
+
+        async function startCamera() {
+            if (isStarting || isScanning) return;
+            if (!checkBrowserSupport()) return;
+
+            isStarting = true;
+            setBtnState('loading');
+            hideStatus();
+
+            try {
+                const selectedId = cameraSelect.value;
+
+                // إعداد قيود الفيديو
+                let constraints;
+                if (selectedId) {
+                    constraints = {
+                        video: {
+                            deviceId: { exact: selectedId },
+                            width:  { ideal: 1280 },
+                            height: { ideal: 720 }
+                        },
+                        audio: false
+                    };
+                } else {
+                    constraints = {
+                        video: {
+                            facingMode: { ideal: 'environment' },
+                            width:  { ideal: 1280 },
+                            height: { ideal: 720 }
+                        },
+                        audio: false
+                    };
+                }
+
+                videoStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+                videoEl.srcObject = videoStream;
+
+                // انتظار تحميل بيانات الفيديو
+                await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => reject(new Error('انتهت مهلة تحميل الفيديو')), 10000);
+                    videoEl.onloadedmetadata = () => {
+                        clearTimeout(timeout);
+                        videoEl.play().then(resolve).catch(reject);
+                    };
+                });
+
+                isScanning = true;
+                currentDeviceId = selectedId || 'environment';
+                setBtnState('stop');
+                readerPlaceholder.style.display = 'none';
+                videoEl.style.display = 'block';
+                scanOverlay.classList.add('active');
+                readerWrapper.classList.add('scanning');
+                readerWrapper.classList.remove('error');
+                showStatus('الكاميرا تعمل الآن. وجّه الكاميرا نحو الباركود.', 'success');
+
+                // تحديث قائمة الكاميرات بعد منح الصلاحية (لتحديث التسميات)
+                await loadCameras();
+
+                // بدء حلقة المسح
+                startScanLoop();
+
+            } catch (err) {
+                console.error('خطأ في تشغيل الكاميرا:', err);
+                readerWrapper.classList.add('error');
+                readerWrapper.classList.remove('scanning');
+                readerPlaceholder.style.display = 'block';
+                videoEl.style.display = 'none';
+                scanOverlay.classList.remove('active');
+                setBtnState('play');
+
+                let msg = 'حدث خطأ أثناء تشغيل الكاميرا.';
+                if (err && err.name === 'NotAllowedError') {
+                    msg = 'تم رفض صلاحية الكاميرا. الرجاء السماح بالوصول للكاميرا من إعدادات المتصفح، ثم أعد المحاولة.';
+                } else if (err && err.name === 'NotFoundError') {
+                    msg = 'لا توجد كاميرا متصلة بهذا الجهاز.';
+                } else if (err && err.name === 'NotReadableError') {
+                    msg = 'الكاميرا مستخدمة بواسطة تطبيق آخر. أغلق التطبيقات الأخرى وأعد المحاولة.';
+                } else if (err && err.name === 'OverconstrainedError') {
+                    msg = 'الكاميرا المختارة لا تدعم الإعدادات المطلوبة. اختر كاميرا أخرى.';
+                } else if (location.protocol === 'file:') {
+                    msg = 'أنت تفتح الملف من القرص مباشرةً. المتصفح يمنع الكاميرا في هذه الحالة. استخدم خادم محلي.';
+                } else if (err && err.message) {
+                    msg = 'خطأ: ' + err.message;
+                }
+                showStatus(msg, 'error');
+            } finally {
+                isStarting = false;
+            }
+        }
+
+        async function stopCamera() {
+            // إيقاف حلقة المسح
+            if (scanAnimationFrame) {
+                cancelAnimationFrame(scanAnimationFrame);
+                scanAnimationFrame = null;
+            }
+
+            // إيقاف الـ stream
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+
+            videoEl.srcObject = null;
+            isScanning = false;
+            currentDeviceId = null;
+            videoEl.style.display = 'none';
+            readerPlaceholder.style.display = 'block';
+            scanOverlay.classList.remove('active');
+            readerWrapper.classList.remove('scanning');
+            setBtnState('play');
+            hideStatus();
+        }
+
+        // ===== حلقة المسح (تستخدم jsQR للـ QR + QuaggaJS للـ 1D barcodes) =====
+        function startScanLoop() {
+            let lastQuaggaCheck = 0;
+
+            function scanFrame() {
+                if (!isScanning || videoEl.readyState !== videoEl.HAVE_ENOUGH_DATA) {
+                    scanAnimationFrame = requestAnimationFrame(scanFrame);
+                    return;
+                }
+
+                const w = videoEl.videoWidth;
+                const h = videoEl.videoHeight;
+                if (w === 0 || h === 0) {
+                    scanAnimationFrame = requestAnimationFrame(scanFrame);
+                    return;
+                }
+
+                canvasEl.width = w;
+                canvasEl.height = h;
+                canvasCtx.drawImage(videoEl, 0, 0, w, h);
+
+                // 1) محاولة قراءة QR code عبر jsQR
+                try {
+                    const imageData = canvasCtx.getImageData(0, 0, w, h);
+                    const qrCode = jsQR(imageData.data, imageData.width, imageData.height, {
+                        inversionAttempts: 'dontInvert'
+                    });
+                    if (qrCode && qrCode.data) {
+                        onScanSuccess(qrCode.data);
+                    }
+                } catch (e) {
+                    // تجاهل
+                }
+
+                // 2) محاولة قراءة 1D barcodes عبر Quagga كل 300ms (للأداء)
+                const now = performance.now();
+                if (now - lastQuaggaCheck > 300 && typeof Quagga !== 'undefined') {
+                    lastQuaggaCheck = now;
+                    try {
+                        // استخراج بيانات البكسل لـ Quagga
+                        const imageData = canvasCtx.getImageData(0, 0, w, h);
+                        Quagga.decodeSingle({
+                            src: imageData,
+                            locate: true,
+                            decoder: {
+                                readers: [
+                                    'ean_reader', 'ean_8_reader',
+                                    'upc_reader', 'upc_e_reader',
+                                    'code_128_reader',
+                                    'code_39_reader',
+                                    'code_93_reader',
+                                    'codabar_reader',
+                                    'i2of5_reader'
+                                ]
+                            }
+                        }, function(result) {
+                            if (result && result.codeResult && result.codeResult.code) {
+                                onScanSuccess(result.codeResult.code);
+                            }
+                        });
+                    } catch (e) {
+                        // تجاهل
+                    }
+                }
+
+                scanAnimationFrame = requestAnimationFrame(scanFrame);
+            }
+
+            scanAnimationFrame = requestAnimationFrame(scanFrame);
+        }
+
+        // ===== نجاح المسح =====
+        function onScanSuccess(decodedText) {
+            if (!decodedText) return;
+            const now = Date.now();
+
+            if (decodedText === lastScannedCode && (now - lastScanTime) < 1500) {
+                return;
+            }
+
+            lastScannedCode = decodedText;
+            lastScanTime = now;
+
+            if (inventoryData[decodedText]) {
+                inventoryData[decodedText]++;
+            } else {
+                inventoryData[decodedText] = 1;
+            }
+
+            playBeep();
+            updateUI();
+            showScanToast(decodedText);
+
+            const tableWrapper = document.getElementById('tableWrapper');
+            tableWrapper.classList.add('flash');
+            setTimeout(() => tableWrapper.classList.remove('flash'), 500);
+        }
+
+        // ===== الإشعار المنبثق =====
+        let toastTimer;
+        function showScanToast(code) {
+            const toast = document.getElementById('scanToast');
+            const text = document.getElementById('scanToastText');
+            const display = code.length > 20 ? code.substring(0, 20) + '...' : code;
+            text.textContent = 'تمت قراءة: ' + display;
+            toast.classList.add('show');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => toast.classList.remove('show'), 1500);
+        }
+
+        // ===== الصوت (مع fallback) =====
+        let audioCtx = null;
+        function playBeep() {
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.type = 'sine';
+                osc.frequency.value = 880;
+                gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.15);
+            } catch (e) {
+                console.log('تعذّر تشغيل الصوت');
+            }
+        }
+
+        // ===== تحديث الجدول والإحصائيات =====
+        function updateUI() {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+
+            let totalItems = 0;
+            let totalQty = 0;
+
+            for (const [code, qty] of Object.entries(inventoryData)) {
+                totalItems++;
+                totalQty += qty;
+
+                const tr = document.createElement('tr');
+                const safeCode = code.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                tr.innerHTML = `
+                    <td style="font-family: monospace; font-size: 15px; letter-spacing: 1px; word-break: break-all;">${escapeHtml(code)}</td>
+                    <td><span style="background: var(--primary); padding: 4px 12px; border-radius: 8px; color: white; font-weight: bold;">${qty}</span></td>
+                    <td>
+                        <button onclick="decreaseQty('${safeCode}')" style="background: var(--danger); color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: 0.2s;" title="تقليل الكمية"><i class="fa-solid fa-minus"></i></button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            }
+
+            document.getElementById('totalItems').innerText = totalItems;
+            document.getElementById('totalQuantity').innerText = totalQty;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        window.decreaseQty = function(code) {
+            if (inventoryData[code] > 1) {
+                inventoryData[code]--;
+            } else {
+                delete inventoryData[code];
+            }
+            updateUI();
+        };
+
+        window.exportToExcel = function() {
+            if (Object.keys(inventoryData).length === 0) {
+                alert('لا يوجد بيانات لتصديرها!');
+                return;
+            }
+
+            const dataForExcel = Object.entries(inventoryData).map(([code, qty]) => ({
+                'الباركود (Barcode)': code,
+                'الكمية (Quantity)': qty
+            }));
+
+            const worksheet = XLSX.utils.json_to_sheet(dataForExcel);
+            const workbook = XLSX.utils.book_new();
+
+            if (!worksheet['!views']) worksheet['!views'] = [];
+            worksheet['!views'].push({ rightToLeft: true });
+
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'الجرد');
+            XLSX.writeFile(workbook, 'Inventory_Report.xlsx');
+        };
+
+        // ===== التهيئة =====
+        window.addEventListener('DOMContentLoaded', () => {
+            checkProtocol();
+            checkBrowserSupport();
+            // لا نطلب الصلاحية مسبقاً - المستخدم يضغط زر التشغيل أولاً
+        });
+
+        // ===== التنظيف عند مغادرة الصفحة =====
+        window.addEventListener('beforeunload', () => {
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+            }
+            if (scanAnimationFrame) cancelAnimationFrame(scanAnimationFrame);
+        });
+        window.addEventListener('pagehide', () => {
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+            }
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && isScanning) {
+                stopCamera();
+            }
+        });
+
+        // فتح AudioContext عند أول تفاعل
+        document.addEventListener('click', () => {
+            if (!audioCtx) {
+                try {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                } catch (e) {}
+            }
+        }, { once: true });
+    </script>
+</body>
+</html>
